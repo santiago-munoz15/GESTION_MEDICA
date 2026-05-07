@@ -3,6 +3,6 @@ services:
     name: agente-medico-backend
     env: python
     buildCommand: "pip install -r requirements.txt"
-    startCommand: "gunicorn AGENTE_MEDICO.wsgi"
+    startCommand: "gunicorn agente_medico.wsgi"
     plan: free
     autoDeploy: true
