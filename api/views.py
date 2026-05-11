@@ -112,12 +112,25 @@ Responde EXCLUSIVAMENTE con un objeto JSON válido (sin markdown, sin bloques de
             import sys
             print(f"[GEMINI ERROR] ClientError: {exc}", file=sys.stderr)
             respuesta_local = diagnosticar(sintomas)
+            mensaje_error = str(exc)
             if getattr(exc, "status_code", None) == 429:
                 return Response(
                     {
                         "fuente": "reglas_locales",
                         "respuesta": respuesta_local,
+                        "warning": "Gemini no disponible por cuota (429). Se uso evaluacion local.",
                         "error_razon": "Cuota de Gemini excedida (429)",
+                    },
+                    status=200,
+                )
+
+            if getattr(exc, "status_code", None) == 403 and "reported as leaked" in mensaje_error:
+                return Response(
+                    {
+                        "fuente": "reglas_locales",
+                        "respuesta": respuesta_local,
+                        "warning": "La API key de Gemini fue marcada como filtrada y bloqueada. Se uso evaluacion local.",
+                        "error_razon": "API key de Gemini bloqueada por seguridad (403)",
                     },
                     status=200,
                 )
@@ -126,6 +139,7 @@ Responde EXCLUSIVAMENTE con un objeto JSON válido (sin markdown, sin bloques de
                 {
                     "fuente": "reglas_locales",
                     "respuesta": respuesta_local,
+                    "warning": "Gemini no disponible temporalmente. Se uso evaluacion local.",
                     "error_razon": f"Error de Gemini: {str(exc)[:100]}",
                 },
                 status=200,
