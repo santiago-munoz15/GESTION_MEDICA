@@ -2,9 +2,12 @@
 import { jsPDF } from 'jspdf'
 import Swal from 'sweetalert2'
 
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '')
-const DIAGNOSTICO_ENDPOINT = API_BASE_URL
-  ? `${API_BASE_URL}/api/diagnostico/`
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').trim().replace(/\/+$/, '')
+const API_BASE_URL_NORMALIZADA = API_BASE_URL.endsWith('/api')
+  ? API_BASE_URL.slice(0, -4)
+  : API_BASE_URL
+const DIAGNOSTICO_ENDPOINT = API_BASE_URL_NORMALIZADA
+  ? `${API_BASE_URL_NORMALIZADA}/api/diagnostico/`
   : '/api/diagnostico/'
 
 function intentarParsearRespuesta(raw) {
@@ -74,7 +77,7 @@ async function parsearRespuestaHttp(response) {
       try {
         data = JSON.parse(rawText)
       } catch {
-        data = null
+        data = intentarParsearRespuesta(rawText)
       }
     } else {
       data = intentarParsearRespuesta(rawText)
@@ -89,13 +92,23 @@ async function parsearRespuestaHttp(response) {
   }
 
   if (!data) {
-    if (contentType.includes('text/html')) {
+    const pareceHtml =
+      contentType.includes('text/html') ||
+      /<!doctype html|<html[\s>]/i.test(rawText || '')
+
+    if (pareceHtml) {
       throw new Error(
-        'La API no respondio con JSON. Configura VITE_API_BASE_URL con la URL del backend en Render.'
+        'La API respondio HTML en lugar de JSON. Verifica VITE_API_BASE_URL apuntando al backend de Render.'
       )
     }
 
-    throw new Error('El servidor devolvio una respuesta vacia o invalida.')
+    if (!rawText) {
+      throw new Error(
+        `El servidor respondio sin contenido (HTTP ${response.status}). Revisa logs del backend en Render.`
+      )
+    }
+
+    throw new Error('El servidor devolvio una respuesta no JSON. Revisa el endpoint configurado.')
   }
 
   return data
