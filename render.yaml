@@ -10,8 +10,7 @@ services:
   - type: web
     name: agente-medico-frontend
     env: static
-    rootDir: frontend
-    buildCommand: "npm install && npm run build"
-    staticPublishPath: dist
+    buildCommand: "cd frontend && npm ci && npm run build"
+    staticPublishPath: frontend/dist
     plan: free
     autoDeploy: true
