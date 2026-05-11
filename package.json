@@ -1,0 +1,8 @@
+{
+  "name": "agente-medico-root",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "build": "npm --prefix frontend ci && npm --prefix frontend run build && rm -rf dist && cp -r frontend/dist dist"
+  }
+}
