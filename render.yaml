@@ -6,3 +6,12 @@ services:
     startCommand: "gunicorn agente_medico.wsgi"
     plan: free
     autoDeploy: true
+
+  - type: web
+    name: agente-medico-frontend
+    env: static
+    rootDir: frontend
+    buildCommand: "npm install && npm run build"
+    staticPublishPath: dist
+    plan: free
+    autoDeploy: true
