@@ -2,13 +2,13 @@
 import { jsPDF } from 'jspdf'
 import Swal from 'sweetalert2'
 
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').trim().replace(/\/+$/, '')
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'https://gestion-medica.onrender.com').trim().replace(/\/+$/, '')
 const API_BASE_URL_NORMALIZADA = API_BASE_URL.endsWith('/api')
   ? API_BASE_URL.slice(0, -4)
   : API_BASE_URL
 const DIAGNOSTICO_ENDPOINT = API_BASE_URL_NORMALIZADA
   ? `${API_BASE_URL_NORMALIZADA}/api/diagnostico/`
-  : '/api/diagnostico/'
+  : 'https://gestion-medica.onrender.com/api/diagnostico/'
 
 function intentarParsearRespuesta(raw) {
   if (raw && typeof raw === 'object') {
