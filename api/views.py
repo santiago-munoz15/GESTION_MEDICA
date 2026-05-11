@@ -109,12 +109,15 @@ Responde EXCLUSIVAMENTE con un objeto JSON válido (sin markdown, sin bloques de
             return Response({"respuesta": respuesta, "fuente": "gemini"})
         except genai_errors.ClientError as exc:
             # Fallback local para evitar 500 cuando Gemini no tiene cuota o devuelve error de cliente.
+            import sys
+            print(f"[GEMINI ERROR] ClientError: {exc}", file=sys.stderr)
             respuesta_local = diagnosticar(sintomas)
             if getattr(exc, "status_code", None) == 429:
                 return Response(
                     {
                         "fuente": "reglas_locales",
                         "respuesta": respuesta_local,
+                        "error_razon": "Cuota de Gemini excedida (429)",
                     },
                     status=200,
                 )
@@ -123,15 +126,19 @@ Responde EXCLUSIVAMENTE con un objeto JSON válido (sin markdown, sin bloques de
                 {
                     "fuente": "reglas_locales",
                     "respuesta": respuesta_local,
+                    "error_razon": f"Error de Gemini: {str(exc)[:100]}",
                 },
                 status=200,
             )
-        except Exception:
+        except Exception as e:
+            import sys
+            print(f"[GEMINI ERROR] Exception: {e}", file=sys.stderr)
             respuesta_local = diagnosticar(sintomas)
             return Response(
                 {
                     "fuente": "reglas_locales",
                     "respuesta": respuesta_local,
+                    "error_razon": f"Error inesperado: {str(e)[:100]}",
                 },
                 status=200,
             )

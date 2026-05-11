@@ -132,5 +132,12 @@ CORS_ALLOWED_ORIGINS = [
 if DEBUG and not CORS_ALLOWED_ORIGINS:
     CORS_ALLOW_ALL_ORIGINS = True
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AIzaSyDRVdQL6_pyJlegt0HkKO15YXtblrr0Udg")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+if not GEMINI_API_KEY:
+    import warnings
+    warnings.warn(
+        "GEMINI_API_KEY no está configurada. "
+        "El sistema usará diagnósticos locales en lugar de Gemini.",
+        RuntimeWarning
+    )
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-lite-latest")

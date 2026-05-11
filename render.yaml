@@ -11,6 +11,10 @@ services:
         value: "False"
       - key: CORS_ALLOWED_ORIGINS
         value: "https://gestion-medica-1.onrender.com"
+      - key: GEMINI_API_KEY
+        value: ""
+      - key: GEMINI_MODEL
+        value: "gemini-2.0-flash"
 
   - type: web
     name: GESTION_MEDICA-1
