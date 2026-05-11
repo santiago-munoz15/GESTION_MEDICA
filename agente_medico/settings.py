@@ -35,6 +35,7 @@ INSTALLED_APPS = [
     'django.contrib.admin',
     'rest_framework',
     'api',
+    'corsheaders',
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
@@ -44,6 +45,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "corsheaders.middleware.CorsMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -120,6 +122,15 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+CORS_ALLOWED_ORIGINS = [
+    origen.strip()
+    for origen in os.environ.get('CORS_ALLOWED_ORIGINS', '').split(',')
+    if origen.strip()
+]
+
+if DEBUG and not CORS_ALLOWED_ORIGINS:
+    CORS_ALLOW_ALL_ORIGINS = True
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AIzaSyDRVdQL6_pyJlegt0HkKO15YXtblrr0Udg")
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-lite-latest")

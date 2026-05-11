@@ -2,6 +2,11 @@
 import { jsPDF } from 'jspdf'
 import Swal from 'sweetalert2'
 
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '')
+const DIAGNOSTICO_ENDPOINT = API_BASE_URL
+  ? `${API_BASE_URL}/api/diagnostico/`
+  : '/api/diagnostico/'
+
 function intentarParsearRespuesta(raw) {
   if (raw && typeof raw === 'object') {
     return raw
@@ -57,6 +62,43 @@ async function cargarImagenComoDataUrl(ruta) {
     lector.onerror = () => reject(new Error('No se pudo convertir la imagen'))
     lector.readAsDataURL(blob)
   })
+}
+
+async function parsearRespuestaHttp(response) {
+  const contentType = response.headers.get('content-type') || ''
+  const rawText = await response.text()
+
+  let data = null
+  if (rawText) {
+    if (contentType.includes('application/json')) {
+      try {
+        data = JSON.parse(rawText)
+      } catch {
+        data = null
+      }
+    } else {
+      data = intentarParsearRespuesta(rawText)
+    }
+  }
+
+  if (!response.ok) {
+    const errorDesdeApi = data && typeof data === 'object' ? data.error : null
+    throw new Error(
+      errorDesdeApi || `Error del servidor (${response.status}). Intenta nuevamente.`
+    )
+  }
+
+  if (!data) {
+    if (contentType.includes('text/html')) {
+      throw new Error(
+        'La API no respondio con JSON. Configura VITE_API_BASE_URL con la URL del backend en Render.'
+      )
+    }
+
+    throw new Error('El servidor devolvio una respuesta vacia o invalida.')
+  }
+
+  return data
 }
 
 const ANTECEDENTES_MEDICOS = [
@@ -230,7 +272,7 @@ function App() {
     const marcaTiempo = new Date()
 
     try {
-      const response = await fetch('/api/diagnostico/', {
+      const response = await fetch(DIAGNOSTICO_ENDPOINT, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -246,11 +288,7 @@ function App() {
         }),
       })
 
-      const data = await response.json()
-
-      if (!response.ok) {
-        throw new Error(data.error || 'No fue posible procesar la solicitud.')
-      }
+      const data = await parsearRespuestaHttp(response)
 
       setResultado(data)
       setDatosConsulta({
