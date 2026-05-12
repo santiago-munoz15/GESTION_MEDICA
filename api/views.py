@@ -165,56 +165,62 @@ Responde EXCLUSIVAMENTE con un objeto JSON válido (sin markdown, sin bloques de
                 "Por favor coordinar cita y notificar al paciente."
             )
 
-            def _send_sync():
-                try:
-                    print(f"[EMAIL] Enviando correo de escalacion a: {recipients}")
-                    sendgrid_key = getattr(django_settings, 'SENDGRID_API_KEY', '')
-                    from_email = getattr(django_settings, 'DEFAULT_FROM_EMAIL', 'no-reply@localhost')
-
-                    if sendgrid_key:
-                        # Usar SendGrid Web API (recomendado en entornos cloud)
-                        url = 'https://api.sendgrid.com/v3/mail/send'
-                        headers = {
-                            'Authorization': f'Bearer {sendgrid_key}',
-                            'Content-Type': 'application/json'
-                        }
-                        to_list = [{'email': r} for r in recipients]
-                        payload = {
-                            'personalizations': [
-                                {
-                                    'to': to_list,
-                                }
-                            ],
-                            'from': {'email': from_email},
-                            'subject': subject,
-                            'content': [
-                                {'type': 'text/plain', 'value': body}
-                            ]
-                        }
-                        resp = requests.post(url, headers=headers, json=payload, timeout=10)
-                        print(f"[EMAIL API] SendGrid response: {resp.status_code} {resp.text}")
-                        if resp.status_code in (200, 202):
-                            print(f"[EMAIL] Enviado OK (SendGrid) a: {recipients}")
-                        else:
-                            print(f"[EMAIL ERROR] SendGrid responded with {resp.status_code}: {resp.text}")
-                    else:
-                        # Fallback a SMTP via Django
-                        send_mail(subject, body, from_email, recipients, fail_silently=False)
-                        print(f"[EMAIL] Enviado ok a: {recipients}")
-                except Exception as e:
-                    tb = traceback.format_exc()
-                    print(f"[EMAIL ERROR] {e}\n{tb}")
-
-            # Enviar de forma asíncrona para no bloquear la respuesta HTTP ni agotar el worker
+            # Enviar correo de forma síncrona pero con timeout corto (5s) para no bloquear demasiado
             try:
-                thread = threading.Thread(target=_send_sync, daemon=True)
-                thread.start()
-                print(f"[EMAIL] Encolado correo de escalacion a: {recipients}")
-                # No sabemos si llegará correctamente; devolvemos estado 'queued' en email_err para indicar encolado
-                return None, 'queued', recipients
+                print(f"[EMAIL] Intentando enviar correo a: {recipients}")
+                sendgrid_key = getattr(django_settings, 'SENDGRID_API_KEY', '')
+                from_email = getattr(django_settings, 'DEFAULT_FROM_EMAIL', 'no-reply@localhost')
+
+                if sendgrid_key:
+                    # Usar SendGrid Web API (recomendado en entornos cloud)
+                    print(f"[EMAIL] Usando SendGrid API con key: {sendgrid_key[:10]}...")
+                    url = 'https://api.sendgrid.com/v3/mail/send'
+                    headers = {
+                        'Authorization': f'Bearer {sendgrid_key}',
+                        'Content-Type': 'application/json'
+                    }
+                    to_list = [{'email': r} for r in recipients]
+                    payload = {
+                        'personalizations': [
+                            {
+                                'to': to_list,
+                            }
+                        ],
+                        'from': {'email': from_email},
+                        'subject': subject,
+                        'content': [
+                            {'type': 'text/plain', 'value': body}
+                        ]
+                    }
+                    try:
+                        resp = requests.post(url, headers=headers, json=payload, timeout=5)
+                        print(f"[EMAIL API] SendGrid response: {resp.status_code}")
+                        if resp.status_code in (200, 202):
+                            print(f"[EMAIL] Enviado OK (SendGrid API) a: {recipients}")
+                            return True, None, recipients
+                        else:
+                            error_msg = f"SendGrid returned {resp.status_code}: {resp.text[:200]}"
+                            print(f"[EMAIL ERROR] {error_msg}")
+                            return False, error_msg, recipients
+                    except requests.exceptions.Timeout:
+                        error_msg = "SendGrid API request timed out after 5s"
+                        print(f"[EMAIL ERROR] {error_msg}")
+                        return False, error_msg, recipients
+                    except Exception as e:
+                        error_msg = f"SendGrid API error: {str(e)[:100]}"
+                        print(f"[EMAIL ERROR] {error_msg}")
+                        return False, error_msg, recipients
+                else:
+                    # Fallback a SMTP via Django
+                    print(f"[EMAIL] No SENDGRID_API_KEY, usando SMTP...")
+                    send_mail(subject, body, from_email, recipients, fail_silently=False)
+                    print(f"[EMAIL] Enviado OK (SMTP) a: {recipients}")
+                    return True, None, recipients
             except Exception as e:
-                print(f"[EMAIL ERROR] no se pudo encolar: {e}", file=sys.stderr)
-                return False, str(e), recipients
+                tb = traceback.format_exc()
+                error_msg = f"{str(e)[:100]}"
+                print(f"[EMAIL ERROR] {error_msg}\n{tb}")
+                return False, error_msg, recipients
 
         try:
             # Evita que una llamada lenta a Gemini supere el timeout de Gunicorn.
@@ -247,13 +253,11 @@ Responde EXCLUSIVAMENTE con un objeto JSON válido (sin markdown, sin bloques de
             if email_sent is True:
                 respuesta_payload['email_enviado'] = True
                 respuesta_payload['email_recipients'] = email_recipients
-            elif email_err == 'queued' or email_err == 'queued':
-                respuesta_payload['email_enqueued'] = True
-                respuesta_payload['email_recipients'] = email_recipients
-            elif email_err:
+            elif email_sent is False:
                 respuesta_payload['email_enviado'] = False
                 respuesta_payload['email_error'] = email_err
-                respuesta_payload['email_recipients'] = email_recipients if 'email_recipients' in locals() else []
+                respuesta_payload['email_recipients'] = email_recipients
+            # Si email_sent es None, no enviar info de email (no aplica gravedad ALTA)
 
             return Response(respuesta_payload)
         except TimeoutError as exc:
@@ -282,10 +286,7 @@ Responde EXCLUSIVAMENTE con un objeto JSON válido (sin markdown, sin bloques de
             if email_sent is True:
                 payload['email_enviado'] = True
                 payload['email_recipients'] = email_recipients
-            elif email_err == 'queued' or email_err == 'queued':
-                payload['email_enqueued'] = True
-                payload['email_recipients'] = email_recipients
-            elif email_err:
+            elif email_sent is False:
                 payload['email_enviado'] = False
                 payload['email_error'] = email_err
                 payload['email_recipients'] = email_recipients
@@ -346,10 +347,7 @@ Responde EXCLUSIVAMENTE con un objeto JSON válido (sin markdown, sin bloques de
             if email_sent is True:
                 payload['email_enviado'] = True
                 payload['email_recipients'] = email_recipients
-            elif email_err == 'queued' or email_err == 'queued':
-                payload['email_enqueued'] = True
-                payload['email_recipients'] = email_recipients
-            elif email_err:
+            elif email_sent is False:
                 payload['email_enviado'] = False
                 payload['email_error'] = email_err
                 payload['email_recipients'] = email_recipients
