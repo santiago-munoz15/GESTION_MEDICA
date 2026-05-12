@@ -141,6 +141,7 @@ if not GEMINI_API_KEY:
         RuntimeWarning
     )
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-lite-latest")
+GEMINI_TIMEOUT_SECONDS = int(os.environ.get("GEMINI_TIMEOUT_SECONDS", 18) or 18)
 
 # Email configuration (read from environment)
 EMAIL_HOST = os.environ.get("EMAIL_HOST", "")

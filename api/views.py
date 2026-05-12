@@ -1,5 +1,6 @@
 import json
 import sys
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from django.conf import settings as django_settings
 from django.core.mail import send_mail
 
@@ -84,6 +85,7 @@ class DiagnosticoIA(APIView):
     def post(self, request):
         sintomas = request.data.get("sintomas", "")
         antecedentes_medicos = _resumir_antecedentes_medicos(request.data.get("antecedentes_medicos", []))
+        gemini_timeout_seconds = int(getattr(django_settings, "GEMINI_TIMEOUT_SECONDS", 18) or 18)
 
         if len(sintomas.split()) < 3:
             return Response({
@@ -169,7 +171,19 @@ Responde EXCLUSIVAMENTE con un objeto JSON válido (sin markdown, sin bloques de
                 return False, str(e), recipients
 
         try:
-            respuesta_texto = preguntar_gemini(prompt)
+            # Evita que una llamada lenta a Gemini supere el timeout de Gunicorn.
+            executor = ThreadPoolExecutor(max_workers=1)
+            future = executor.submit(preguntar_gemini, prompt)
+            try:
+                respuesta_texto = future.result(timeout=gemini_timeout_seconds)
+            except FuturesTimeoutError as timeout_exc:
+                future.cancel()
+                raise TimeoutError(
+                    f"Gemini excedio el tiempo maximo de {gemini_timeout_seconds}s"
+                ) from timeout_exc
+            finally:
+                executor.shutdown(wait=False, cancel_futures=True)
+
             respuesta = _intentar_parsear_json(respuesta_texto) or respuesta_texto
             respuesta = _normalizar_respuesta_medica(respuesta)
 
@@ -193,6 +207,38 @@ Responde EXCLUSIVAMENTE con un objeto JSON válido (sin markdown, sin bloques de
                 respuesta_payload['email_recipients'] = email_recipients if 'email_recipients' in locals() else []
 
             return Response(respuesta_payload)
+        except TimeoutError as exc:
+            print(f"[GEMINI TIMEOUT] {exc}", file=sys.stderr)
+            respuesta_local = diagnosticar(sintomas)
+
+            datos_paciente_local = {
+                'nombre_completo': request.data.get('nombre_completo'),
+                'tipo_documento': request.data.get('tipo_documento'),
+                'numero_documento': request.data.get('numero_documento'),
+                'sintomas': request.data.get('sintomas'),
+                'especialista_email': request.data.get('especialista_email'),
+            }
+
+            try:
+                email_sent, email_err, email_recipients = _enviar_correo_escalacion(respuesta_local, datos_paciente_local)
+            except Exception:
+                email_sent, email_err, email_recipients = False, 'Error al intentar enviar correo', []
+
+            payload = {
+                "fuente": "reglas_locales",
+                "respuesta": respuesta_local,
+                "warning": "Gemini tardo demasiado en responder. Se uso evaluacion local.",
+                "error_razon": str(exc),
+            }
+            if email_sent:
+                payload['email_enviado'] = True
+                payload['email_recipients'] = email_recipients
+            elif email_err:
+                payload['email_enviado'] = False
+                payload['email_error'] = email_err
+                payload['email_recipients'] = email_recipients
+
+            return Response(payload, status=200)
         except genai_errors.ClientError as exc:
             # Fallback local para evitar 500 cuando Gemini no tiene cuota o devuelve error de cliente.
             import sys
