@@ -239,59 +239,17 @@ Responde EXCLUSIVAMENTE con un objeto JSON válido (sin markdown, sin bloques de
             respuesta = _intentar_parsear_json(respuesta_texto) or respuesta_texto
             respuesta = _normalizar_respuesta_medica(respuesta)
 
-            # Intentar enviar correo si la gravedad es ALTA
-            datos_paciente = {
-                'nombre_completo': request.data.get('nombre_completo'),
-                'tipo_documento': request.data.get('tipo_documento'),
-                'numero_documento': request.data.get('numero_documento'),
-                'sintomas': request.data.get('sintomas'),
-                'especialista_email': request.data.get('especialista_email'),
-            }
-            email_sent, email_err, email_recipients = _enviar_correo_escalacion(respuesta, datos_paciente)
-
-            respuesta_payload = {"respuesta": respuesta, "fuente": "gemini"}
-            if email_sent is True:
-                respuesta_payload['email_enviado'] = True
-                respuesta_payload['email_recipients'] = email_recipients
-            elif email_sent is False:
-                respuesta_payload['email_enviado'] = False
-                respuesta_payload['email_error'] = email_err
-                respuesta_payload['email_recipients'] = email_recipients
-            # Si email_sent es None, no enviar info de email (no aplica gravedad ALTA)
-
-            return Response(respuesta_payload)
+            return Response({"respuesta": respuesta, "fuente": "gemini"})
         except TimeoutError as exc:
             print(f"[GEMINI TIMEOUT] {exc}", file=sys.stderr)
             respuesta_local = diagnosticar(sintomas)
 
-            datos_paciente_local = {
-                'nombre_completo': request.data.get('nombre_completo'),
-                'tipo_documento': request.data.get('tipo_documento'),
-                'numero_documento': request.data.get('numero_documento'),
-                'sintomas': request.data.get('sintomas'),
-                'especialista_email': request.data.get('especialista_email'),
-            }
-
-            try:
-                email_sent, email_err, email_recipients = _enviar_correo_escalacion(respuesta_local, datos_paciente_local)
-            except Exception:
-                email_sent, email_err, email_recipients = False, 'Error al intentar enviar correo', []
-
-            payload = {
+            return Response({
                 "fuente": "reglas_locales",
                 "respuesta": respuesta_local,
                 "warning": "Gemini tardo demasiado en responder. Se uso evaluacion local.",
                 "error_razon": str(exc),
-            }
-            if email_sent is True:
-                payload['email_enviado'] = True
-                payload['email_recipients'] = email_recipients
-            elif email_sent is False:
-                payload['email_enviado'] = False
-                payload['email_error'] = email_err
-                payload['email_recipients'] = email_recipients
-
-            return Response(payload, status=200)
+            }, status=200)
         except genai_errors.ClientError as exc:
             # Fallback local para evitar 500 cuando Gemini no tiene cuota o devuelve error de cliente.
             import sys
@@ -320,39 +278,12 @@ Responde EXCLUSIVAMENTE con un objeto JSON válido (sin markdown, sin bloques de
                     status=200,
                 )
 
-            # intentar enviar correo de escalacion si corresponde
-            datos_paciente_local = {
-                'nombre_completo': request.data.get('nombre_completo'),
-                'tipo_documento': request.data.get('tipo_documento'),
-                'numero_documento': request.data.get('numero_documento'),
-                'sintomas': request.data.get('sintomas'),
-                'especialista_email': request.data.get('especialista_email'),
-            }
-            try:
-                # reusar la misma rutina definida arriba para intentos de Gemini
-                email_sent, email_err = False, None
-                try:
-                    email_sent, email_err, email_recipients = _enviar_correo_escalacion(respuesta_local, datos_paciente_local)
-                except Exception:
-                    email_sent, email_err, email_recipients = False, 'Error al intentar enviar correo', []
-            except Exception:
-                email_sent, email_err = False, 'Error inesperado al preparar email'
-
-            payload = {
+            return Response({
                 "fuente": "reglas_locales",
                 "respuesta": respuesta_local,
                 "warning": "Gemini no disponible temporalmente. Se uso evaluacion local.",
                 "error_razon": f"Error de Gemini: {str(exc)[:100]}",
-            }
-            if email_sent is True:
-                payload['email_enviado'] = True
-                payload['email_recipients'] = email_recipients
-            elif email_sent is False:
-                payload['email_enviado'] = False
-                payload['email_error'] = email_err
-                payload['email_recipients'] = email_recipients
-
-            return Response(payload, status=200)
+            }, status=200)
         except Exception as e:
             import sys
             print(f"[GEMINI ERROR] Exception: {e}", file=sys.stderr)
@@ -365,3 +296,151 @@ Responde EXCLUSIVAMENTE con un objeto JSON válido (sin markdown, sin bloques de
                 },
                 status=200,
             )
+
+
+class EnviarCorreoEscalacion(APIView):
+    """Endpoint para enviar correo de escalación al especialista después de obtener resultados."""
+
+    def post(self, request):
+        """
+        Recibe:
+        - nombre_completo
+        - tipo_documento
+        - numero_documento
+        - sintomas
+        - especialista_email
+        - diagnostico
+        - gravedad
+        - recomendaciones (lista)
+        - especialista
+        """
+        try:
+            # Extraer datos del request
+            nombre_completo = request.data.get('nombre_completo', 'N/A')
+            tipo_documento = request.data.get('tipo_documento', 'N/A')
+            numero_documento = request.data.get('numero_documento', 'N/A')
+            sintomas = request.data.get('sintomas', 'N/A')
+            especialista_email = request.data.get('especialista_email', '').strip()
+            diagnostico = request.data.get('diagnostico', 'N/A')
+            gravedad = request.data.get('gravedad', 'N/A')
+            recomendaciones = request.data.get('recomendaciones', [])
+            especialista = request.data.get('especialista', 'N/A')
+
+            # Validar que haya email del especialista
+            if not especialista_email or '@' not in especialista_email:
+                return Response({
+                    'email_enviado': False,
+                    'email_error': 'Email del especialista inválido'
+                }, status=400)
+
+            # Validar que sea gravedad ALTA
+            if (gravedad or '').upper() != 'ALTA':
+                return Response({
+                    'email_enviado': False,
+                    'email_error': 'Solo se envían correos para casos de gravedad ALTA'
+                }, status=400)
+
+            # Construir lista de destinatarios
+            recipients = []
+            dest_general = getattr(django_settings, 'SPECIALIST_CONTACT_EMAIL', '')
+            if dest_general:
+                recipients.append(dest_general)
+            if especialista_email not in recipients:
+                recipients.append(especialista_email)
+
+            if not recipients:
+                return Response({
+                    'email_enviado': False,
+                    'email_error': 'No hay destinatarios configurados'
+                }, status=400)
+
+            # Construir el correo
+            subject = f"[ALERTA] Paciente con gravedad ALTA: {nombre_completo}"
+            recomendaciones_text = '\n'.join([f"- {r}" for r in recomendaciones]) if recomendaciones else 'No especificadas'
+            body = (
+                f"Se ha detectado un caso de gravedad ALTA en el sistema.\n\n"
+                f"Paciente:\n"
+                f"Nombre: {nombre_completo}\n"
+                f"Tipo documento: {tipo_documento}\n"
+                f"Número documento: {numero_documento}\n\n"
+                f"Síntomas:\n{sintomas}\n\n"
+                f"Diagnóstico:\n{diagnostico}\n\n"
+                f"Recomendaciones:\n{recomendaciones_text}\n\n"
+                f"Especialista recomendado: {especialista}\n\n"
+                "Por favor coordinar cita y notificar al paciente."
+            )
+
+            # Enviar correo
+            try:
+                print(f"[EMAIL] Intentando enviar correo a: {recipients}")
+                sendgrid_key = getattr(django_settings, 'SENDGRID_API_KEY', '')
+                from_email = getattr(django_settings, 'DEFAULT_FROM_EMAIL', 'no-reply@localhost')
+
+                if sendgrid_key:
+                    # Usar SendGrid Web API
+                    print(f"[EMAIL] Usando SendGrid API con key: {sendgrid_key[:10]}...")
+                    url = 'https://api.sendgrid.com/v3/mail/send'
+                    headers = {
+                        'Authorization': f'Bearer {sendgrid_key}',
+                        'Content-Type': 'application/json'
+                    }
+                    to_list = [{'email': r} for r in recipients]
+                    payload = {
+                        'personalizations': [
+                            {
+                                'to': to_list,
+                            }
+                        ],
+                        'from': {'email': from_email},
+                        'subject': subject,
+                        'content': [
+                            {'type': 'text/plain', 'value': body}
+                        ]
+                    }
+                    try:
+                        resp = requests.post(url, headers=headers, json=payload, timeout=5)
+                        print(f"[EMAIL API] SendGrid response: {resp.status_code}")
+                        if resp.status_code in (200, 202):
+                            print(f"[EMAIL] Enviado OK (SendGrid API) a: {recipients}")
+                            return Response({
+                                'email_enviado': True,
+                                'email_recipients': recipients
+                            }, status=200)
+                        else:
+                            error_msg = f"SendGrid returned {resp.status_code}: {resp.text[:200]}"
+                            print(f"[EMAIL ERROR] {error_msg}")
+                            return Response({
+                                'email_enviado': False,
+                                'email_error': error_msg
+                            }, status=400)
+                    except requests.exceptions.Timeout:
+                        error_msg = "SendGrid API request timed out after 5s"
+                        print(f"[EMAIL ERROR] {error_msg}")
+                        return Response({
+                            'email_enviado': False,
+                            'email_error': error_msg
+                        }, status=400)
+                else:
+                    # Fallback a SMTP
+                    print(f"[EMAIL] No SENDGRID_API_KEY, usando SMTP...")
+                    send_mail(subject, body, from_email, recipients, fail_silently=False)
+                    print(f"[EMAIL] Enviado OK (SMTP) a: {recipients}")
+                    return Response({
+                        'email_enviado': True,
+                        'email_recipients': recipients
+                    }, status=200)
+            except Exception as e:
+                tb = traceback.format_exc()
+                error_msg = f"{str(e)[:100]}"
+                print(f"[EMAIL ERROR] {error_msg}\n{tb}")
+                return Response({
+                    'email_enviado': False,
+                    'email_error': error_msg
+                }, status=400)
+
+        except Exception as e:
+            print(f"[ERROR] EnviarCorreoEscalacion: {e}", file=sys.stderr)
+            return Response({
+                'email_enviado': False,
+                'email_error': f"Error interno: {str(e)[:100]}"
+            }, status=500)

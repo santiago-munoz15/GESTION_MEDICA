@@ -157,7 +157,8 @@ function App() {
   const [edad, setEdad] = useState('')
   const [antecedentesMedicos, setAntecedentesMedicos] = useState([])
   const [sintomas, setSintomas] = useState('')
-  const [especialistaEmail, setEspecialistaEmail] = useState('')
+  const [emailEspecialistaResultados, setEmailEspecialistaResultados] = useState('')
+  const [envioCorreoEnCurso, setEnvioCorreoEnCurso] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [intentoEnvio, setIntentoEnvio] = useState(false)
@@ -248,11 +249,6 @@ function App() {
       errores.push('síntomas con al menos 10 palabras')
     }
 
-    // si se provee email del especialista, validar formato simple
-    if (especialistaEmail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(especialistaEmail)) {
-      errores.push('email del especialista (formato inválido)')
-    }
-
     return errores
   }
 
@@ -264,12 +260,93 @@ function App() {
     setEdad('')
     setAntecedentesMedicos([])
     setSintomas('')
+    setEmailEspecialistaResultados('')
     setError('')
     setIntentoEnvio(false)
     setPaginaActiva('formulario')
     setResultado(null)
     setDatosConsulta(null)
     setLoading(false)
+    setEnvioCorreoEnCurso(false)
+  }
+
+  const enviarCorreoEscalacion = async (event) => {
+    event.preventDefault()
+    if (envioCorreoEnCurso || !emailEspecialistaResultados.trim()) {
+      return
+    }
+
+    // Validar formato email
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailEspecialistaResultados)) {
+      Swal.fire({
+        icon: 'error',
+        title: 'Email inválido',
+        text: 'Por favor ingresa un correo válido',
+        confirmButtonColor: '#0891b2',
+      })
+      return
+    }
+
+    setEnvioCorreoEnCurso(true)
+
+    try {
+      const respuestaParseada = typeof resultado.respuesta === 'string' 
+        ? intentarParsearRespuesta(resultado.respuesta) 
+        : resultado.respuesta
+
+      const response = await fetch(
+        `${API_BASE_URL_NORMALIZADA}/api/enviar-correo-escalacion/`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            nombre_completo: datosConsulta.nombreCompleto,
+            tipo_documento: datosConsulta.tipoDocumento,
+            numero_documento: datosConsulta.numeroDocumento,
+            sintomas: datosConsulta.sintomas,
+            especialista_email: emailEspecialistaResultados.trim(),
+            diagnostico: respuestaParseada?.diagnostico || 'N/A',
+            gravedad: respuestaParseada?.gravedad || 'N/A',
+            recomendaciones: respuestaParseada?.recomendaciones || [],
+            especialista: respuestaParseada?.especialista || 'N/A',
+          }),
+        }
+      )
+
+      if (!response.ok) {
+        throw new Error(`Error ${response.status}: ${response.statusText}`)
+      }
+
+      const data = await response.json()
+
+      if (data.email_enviado) {
+        Swal.fire({
+          icon: 'success',
+          title: 'Correo enviado',
+          html: `Se envió correctamente a:<br/><strong>${emailEspecialistaResultados}</strong>`,
+          confirmButtonColor: '#0891b2',
+        })
+        setEmailEspecialistaResultados('')
+      } else {
+        Swal.fire({
+          icon: 'error',
+          title: 'Error al enviar',
+          text: data.email_error || 'No se pudo enviar el correo',
+          confirmButtonColor: '#0891b2',
+        })
+      }
+    } catch (err) {
+      Swal.fire({
+        icon: 'error',
+        title: 'Error',
+        text: err.message || 'Error al conectar con el servidor',
+        confirmButtonColor: '#0891b2',
+      })
+    } finally {
+      setEnvioCorreoEnCurso(false)
+    }
   }
 
   const enviarDiagnostico = async (event) => {
@@ -304,7 +381,6 @@ function App() {
           edad,
           antecedentes_medicos: antecedentesMedicos,
           sintomas,
-          especialista_email: especialistaEmail || undefined,
         }),
       })
 
@@ -722,18 +798,6 @@ function App() {
             </span>
             {errorSintomas ? <span className="mt-1 block text-xs text-rose-500">{errorSintomas}</span> : null}
 
-            <label className="mt-3 block">
-              <span className="mb-2 block text-sm font-semibold uppercase tracking-[0.12em] text-slate-600 dark:text-slate-300">Email del especialista (opcional)</span>
-              <input
-                type="email"
-                value={especialistaEmail}
-                onChange={(e) => setEspecialistaEmail(e.target.value.trim())}
-                placeholder="ejemplo@especialista.com"
-                className="w-full rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-800 px-3 py-2 text-sm text-slate-800 dark:text-white outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-200 dark:focus:ring-cyan-900"
-              />
-              <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">Si la gravedad es ALTA, se enviará una notificación a este correo además del contacto configurado.</span>
-            </label>
-
             <div className="mt-4 flex flex-wrap items-center gap-3">
               <button
                 type="submit"
@@ -831,6 +895,34 @@ function App() {
                     <p>
                       <strong>Especialista:</strong> {respuestaParseada.especialista || 'N/A'}
                     </p>
+
+                    {respuestaParseada.gravedad?.toUpperCase() === 'ALTA' && (
+                      <div className="mt-4 rounded-2xl border border-rose-300 dark:border-rose-900 bg-rose-50/50 dark:bg-rose-900/20 p-4">
+                        <p className="mb-3 font-semibold text-rose-900 dark:text-rose-100">
+                          ⚠️ Caso de gravedad ALTA - Enviar notificación a especialista
+                        </p>
+                        <form onSubmit={enviarCorreoEscalacion} className="space-y-2">
+                          <div>
+                            <input
+                              type="email"
+                              value={emailEspecialistaResultados}
+                              onChange={(e) => setEmailEspecialistaResultados(e.target.value)}
+                              placeholder="correo@especialista.com"
+                              className="w-full rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-800 dark:text-white outline-none transition focus:border-rose-500 focus:ring-2 focus:ring-rose-200 dark:focus:ring-rose-900"
+                              required
+                            />
+                          </div>
+                          <button
+                            type="submit"
+                            disabled={envioCorreoEnCurso || !emailEspecialistaResultados.trim()}
+                            className="mono rounded-lg bg-rose-600 dark:bg-rose-700 px-4 py-2 text-xs font-semibold text-white transition hover:bg-rose-700 dark:hover:bg-rose-800 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {envioCorreoEnCurso ? 'Enviando...' : 'Enviar correo a especialista'}
+                          </button>
+                        </form>
+                      </div>
+                    )}
+
                     <div>
                       <strong>Recomendaciones:</strong>
                       <ul className="mt-3 grid gap-2 sm:grid-cols-2">
