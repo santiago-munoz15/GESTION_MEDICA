@@ -153,3 +153,5 @@ DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "no-reply@gestion-medi
 
 # Email where escalation notifications are sent when gravedad == 'ALTA'
 SPECIALIST_CONTACT_EMAIL = os.environ.get("SPECIALIST_CONTACT_EMAIL", "")
+# Optional SendGrid API key to use SendGrid Web API instead of SMTP (recommended on cloud hosts)
+SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY", "")

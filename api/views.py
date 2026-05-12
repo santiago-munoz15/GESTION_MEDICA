@@ -1,6 +1,7 @@
 import json
 import sys
 import threading
+import requests
 import traceback
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from django.conf import settings as django_settings
@@ -167,8 +168,39 @@ Responde EXCLUSIVAMENTE con un objeto JSON válido (sin markdown, sin bloques de
             def _send_sync():
                 try:
                     print(f"[EMAIL] Enviando correo de escalacion a: {recipients}")
-                    send_mail(subject, body, getattr(django_settings, 'DEFAULT_FROM_EMAIL', 'no-reply@localhost'), recipients, fail_silently=False)
-                    print(f"[EMAIL] Enviado ok a: {recipients}")
+                    sendgrid_key = getattr(django_settings, 'SENDGRID_API_KEY', '')
+                    from_email = getattr(django_settings, 'DEFAULT_FROM_EMAIL', 'no-reply@localhost')
+
+                    if sendgrid_key:
+                        # Usar SendGrid Web API (recomendado en entornos cloud)
+                        url = 'https://api.sendgrid.com/v3/mail/send'
+                        headers = {
+                            'Authorization': f'Bearer {sendgrid_key}',
+                            'Content-Type': 'application/json'
+                        }
+                        to_list = [{'email': r} for r in recipients]
+                        payload = {
+                            'personalizations': [
+                                {
+                                    'to': to_list,
+                                }
+                            ],
+                            'from': {'email': from_email},
+                            'subject': subject,
+                            'content': [
+                                {'type': 'text/plain', 'value': body}
+                            ]
+                        }
+                        resp = requests.post(url, headers=headers, json=payload, timeout=10)
+                        print(f"[EMAIL API] SendGrid response: {resp.status_code} {resp.text}")
+                        if resp.status_code in (200, 202):
+                            print(f"[EMAIL] Enviado OK (SendGrid) a: {recipients}")
+                        else:
+                            print(f"[EMAIL ERROR] SendGrid responded with {resp.status_code}: {resp.text}")
+                    else:
+                        # Fallback a SMTP via Django
+                        send_mail(subject, body, from_email, recipients, fail_silently=False)
+                        print(f"[EMAIL] Enviado ok a: {recipients}")
                 except Exception as e:
                     tb = traceback.format_exc()
                     print(f"[EMAIL ERROR] {e}\n{tb}")
