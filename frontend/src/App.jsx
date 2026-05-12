@@ -157,6 +157,7 @@ function App() {
   const [edad, setEdad] = useState('')
   const [antecedentesMedicos, setAntecedentesMedicos] = useState([])
   const [sintomas, setSintomas] = useState('')
+  const [especialistaEmail, setEspecialistaEmail] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [intentoEnvio, setIntentoEnvio] = useState(false)
@@ -247,6 +248,11 @@ function App() {
       errores.push('síntomas con al menos 10 palabras')
     }
 
+    // si se provee email del especialista, validar formato simple
+    if (especialistaEmail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(especialistaEmail)) {
+      errores.push('email del especialista (formato inválido)')
+    }
+
     return errores
   }
 
@@ -298,6 +304,7 @@ function App() {
           edad,
           antecedentes_medicos: antecedentesMedicos,
           sintomas,
+          especialista_email: especialistaEmail || undefined,
         }),
       })
 
@@ -329,6 +336,24 @@ function App() {
           }, 4000)
         }
       })
+      // notificar estado de envío de correo si viene en la respuesta
+      if (data?.email_enviado) {
+        Swal.fire({
+          title: 'Correo enviado',
+          text: `Correo de escalación enviado a: ${Array.isArray(data.email_recipients) ? data.email_recipients.join(', ') : ''}`,
+          icon: 'info',
+          timer: 5000,
+          showConfirmButton: false,
+        })
+      } else if (data?.email_error) {
+        Swal.fire({
+          title: 'Error al enviar correo',
+          text: data.email_error,
+          icon: 'warning',
+          timer: 6000,
+          showConfirmButton: false,
+        })
+      }
     } catch (requestError) {
       setError(requestError.message || 'Error inesperado al consultar el servicio.')
       setResultado(null)
@@ -696,6 +721,18 @@ function App() {
               {sintomas.length}/250 caracteres
             </span>
             {errorSintomas ? <span className="mt-1 block text-xs text-rose-500">{errorSintomas}</span> : null}
+
+            <label className="mt-3 block">
+              <span className="mb-2 block text-sm font-semibold uppercase tracking-[0.12em] text-slate-600 dark:text-slate-300">Email del especialista (opcional)</span>
+              <input
+                type="email"
+                value={especialistaEmail}
+                onChange={(e) => setEspecialistaEmail(e.target.value.trim())}
+                placeholder="ejemplo@especialista.com"
+                className="w-full rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-800 px-3 py-2 text-sm text-slate-800 dark:text-white outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-200 dark:focus:ring-cyan-900"
+              />
+              <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">Si la gravedad es ALTA, se enviará una notificación a este correo además del contacto configurado.</span>
+            </label>
 
             <div className="mt-4 flex flex-wrap items-center gap-3">
               <button

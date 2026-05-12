@@ -15,6 +15,20 @@ services:
         value: ""
       - key: GEMINI_MODEL
         value: "gemini-2.0-flash"
+      - key: EMAIL_HOST
+        value: ""
+      - key: EMAIL_PORT
+        value: "587"
+      - key: EMAIL_HOST_USER
+        value: ""
+      - key: EMAIL_HOST_PASSWORD
+        value: ""
+      - key: EMAIL_USE_TLS
+        value: "True"
+      - key: DEFAULT_FROM_EMAIL
+        value: "no-reply@gestion-medica.onrender.com"
+      - key: SPECIALIST_CONTACT_EMAIL
+        value: ""
 
   - type: web
     name: GESTION_MEDICA-1

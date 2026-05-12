@@ -1,4 +1,7 @@
 import json
+import sys
+from django.conf import settings as django_settings
+from django.core.mail import send_mail
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -102,11 +105,94 @@ Responde EXCLUSIVAMENTE con un objeto JSON válido (sin markdown, sin bloques de
 - remision (si gravedad es ALTA)
 """
 
+        def _enviar_correo_escalacion(respuesta_obj, datos_paciente):
+            """Enviar correo a SPECIALIST_CONTACT_EMAIL y al email del especialista si viene en la respuesta.
+
+            Retorna (enviado_bool, error_message_or_None, recipients_list)
+            """
+            if not isinstance(respuesta_obj, dict):
+                return False, 'Respuesta no es JSON estructurado', []
+
+            gravedad = (respuesta_obj.get('gravedad') or '').upper()
+            if gravedad != 'ALTA':
+                return False, 'No aplica (gravedad != ALTA)', []
+
+            recipients = []
+            # contacto general configurado en settings
+            destino_general = getattr(django_settings, 'SPECIALIST_CONTACT_EMAIL', '')
+            if destino_general:
+                recipients.append(destino_general)
+
+            # prioridad: email provisto por quien hace la solicitud (datos_paciente), luego campo 'especialista_email' en la respuesta, luego 'especialista' si contiene '@'
+            especialista_email = None
+            if isinstance(datos_paciente, dict):
+                cand = datos_paciente.get('especialista_email') or datos_paciente.get('especialista')
+                if isinstance(cand, str) and '@' in cand:
+                    especialista_email = cand
+
+            if not especialista_email and isinstance(respuesta_obj.get('especialista_email'), str) and '@' in respuesta_obj.get('especialista_email'):
+                especialista_email = respuesta_obj.get('especialista_email')
+            if not especialista_email:
+                esp = respuesta_obj.get('especialista')
+                if isinstance(esp, str) and '@' in esp:
+                    especialista_email = esp
+
+            if especialista_email and especialista_email not in recipients:
+                recipients.append(especialista_email)
+
+            if not recipients:
+                return False, 'No hay destinatarios configurados para el correo de escalación', []
+
+            subject = f"[ALERTA] Paciente con gravedad ALTA: {datos_paciente.get('nombre_completo', 'Paciente')}"
+            recomendaciones = respuesta_obj.get('recomendaciones') or []
+            recomendaciones_text = '\n'.join([f"- {r}" for r in recomendaciones]) if recomendaciones else 'No especificadas'
+
+            body = (
+                f"Se ha detectado un caso de gravedad ALTA en el sistema.\n\n"
+                f"Paciente:\n"
+                f"Nombre: {datos_paciente.get('nombre_completo', 'N/A')}\n"
+                f"Tipo documento: {datos_paciente.get('tipo_documento', 'N/A')}\n"
+                f"Número documento: {datos_paciente.get('numero_documento', 'N/A')}\n\n"
+                f"Síntomas:\n{datos_paciente.get('sintomas','N/A')}\n\n"
+                f"Diagnóstico:\n{respuesta_obj.get('diagnostico','N/A')}\n\n"
+                f"Recomendaciones:\n{recomendaciones_text}\n\n"
+                f"Especialista recomendado: {respuesta_obj.get('especialista','N/A')}\n\n"
+                "Por favor coordinar cita y notificar al paciente."
+            )
+
+            try:
+                print(f"[EMAIL] Enviando correo de escalacion a: {recipients}")
+                send_mail(subject, body, getattr(django_settings, 'DEFAULT_FROM_EMAIL', 'no-reply@localhost'), recipients, fail_silently=False)
+                return True, None, recipients
+            except Exception as e:
+                print(f"[EMAIL ERROR] {e}", file=sys.stderr)
+                return False, str(e), recipients
+
         try:
             respuesta_texto = preguntar_gemini(prompt)
             respuesta = _intentar_parsear_json(respuesta_texto) or respuesta_texto
             respuesta = _normalizar_respuesta_medica(respuesta)
-            return Response({"respuesta": respuesta, "fuente": "gemini"})
+
+            # Intentar enviar correo si la gravedad es ALTA
+            datos_paciente = {
+                'nombre_completo': request.data.get('nombre_completo'),
+                'tipo_documento': request.data.get('tipo_documento'),
+                'numero_documento': request.data.get('numero_documento'),
+                'sintomas': request.data.get('sintomas'),
+                'especialista_email': request.data.get('especialista_email'),
+            }
+            email_sent, email_err, email_recipients = _enviar_correo_escalacion(respuesta, datos_paciente)
+
+            respuesta_payload = {"respuesta": respuesta, "fuente": "gemini"}
+            if email_sent:
+                respuesta_payload['email_enviado'] = True
+                respuesta_payload['email_recipients'] = email_recipients
+            elif email_err:
+                respuesta_payload['email_enviado'] = False
+                respuesta_payload['email_error'] = email_err
+                respuesta_payload['email_recipients'] = email_recipients if 'email_recipients' in locals() else []
+
+            return Response(respuesta_payload)
         except genai_errors.ClientError as exc:
             # Fallback local para evitar 500 cuando Gemini no tiene cuota o devuelve error de cliente.
             import sys
@@ -135,15 +221,39 @@ Responde EXCLUSIVAMENTE con un objeto JSON válido (sin markdown, sin bloques de
                     status=200,
                 )
 
-            return Response(
-                {
-                    "fuente": "reglas_locales",
-                    "respuesta": respuesta_local,
-                    "warning": "Gemini no disponible temporalmente. Se uso evaluacion local.",
-                    "error_razon": f"Error de Gemini: {str(exc)[:100]}",
-                },
-                status=200,
-            )
+            # intentar enviar correo de escalacion si corresponde
+            datos_paciente_local = {
+                'nombre_completo': request.data.get('nombre_completo'),
+                'tipo_documento': request.data.get('tipo_documento'),
+                'numero_documento': request.data.get('numero_documento'),
+                'sintomas': request.data.get('sintomas'),
+                'especialista_email': request.data.get('especialista_email'),
+            }
+            try:
+                # reusar la misma rutina definida arriba para intentos de Gemini
+                email_sent, email_err = False, None
+                try:
+                    email_sent, email_err, email_recipients = _enviar_correo_escalacion(respuesta_local, datos_paciente_local)
+                except Exception:
+                    email_sent, email_err, email_recipients = False, 'Error al intentar enviar correo', []
+            except Exception:
+                email_sent, email_err = False, 'Error inesperado al preparar email'
+
+            payload = {
+                "fuente": "reglas_locales",
+                "respuesta": respuesta_local,
+                "warning": "Gemini no disponible temporalmente. Se uso evaluacion local.",
+                "error_razon": f"Error de Gemini: {str(exc)[:100]}",
+            }
+            if email_sent:
+                payload['email_enviado'] = True
+                payload['email_recipients'] = email_recipients
+            elif email_err:
+                payload['email_enviado'] = False
+                payload['email_error'] = email_err
+                payload['email_recipients'] = email_recipients
+
+            return Response(payload, status=200)
         except Exception as e:
             import sys
             print(f"[GEMINI ERROR] Exception: {e}", file=sys.stderr)
