@@ -1,6 +1,7 @@
 import json
 import sys
 import threading
+import traceback
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from django.conf import settings as django_settings
 from django.core.mail import send_mail
@@ -169,7 +170,8 @@ Responde EXCLUSIVAMENTE con un objeto JSON válido (sin markdown, sin bloques de
                     send_mail(subject, body, getattr(django_settings, 'DEFAULT_FROM_EMAIL', 'no-reply@localhost'), recipients, fail_silently=False)
                     print(f"[EMAIL] Enviado ok a: {recipients}")
                 except Exception as e:
-                    print(f"[EMAIL ERROR] {e}")
+                    tb = traceback.format_exc()
+                    print(f"[EMAIL ERROR] {e}\n{tb}")
 
             # Enviar de forma asíncrona para no bloquear la respuesta HTTP ni agotar el worker
             try:
