@@ -1,5 +1,6 @@
 import json
 import sys
+import threading
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from django.conf import settings as django_settings
 from django.core.mail import send_mail
@@ -162,12 +163,23 @@ Responde EXCLUSIVAMENTE con un objeto JSON válido (sin markdown, sin bloques de
                 "Por favor coordinar cita y notificar al paciente."
             )
 
+            def _send_sync():
+                try:
+                    print(f"[EMAIL] Enviando correo de escalacion a: {recipients}")
+                    send_mail(subject, body, getattr(django_settings, 'DEFAULT_FROM_EMAIL', 'no-reply@localhost'), recipients, fail_silently=False)
+                    print(f"[EMAIL] Enviado ok a: {recipients}")
+                except Exception as e:
+                    print(f"[EMAIL ERROR] {e}", file=sys.stderr)
+
+            # Enviar de forma asíncrona para no bloquear la respuesta HTTP ni agotar el worker
             try:
-                print(f"[EMAIL] Enviando correo de escalacion a: {recipients}")
-                send_mail(subject, body, getattr(django_settings, 'DEFAULT_FROM_EMAIL', 'no-reply@localhost'), recipients, fail_silently=False)
-                return True, None, recipients
+                thread = threading.Thread(target=_send_sync, daemon=True)
+                thread.start()
+                print(f"[EMAIL] Encolado correo de escalacion a: {recipients}")
+                # No sabemos si llegará correctamente; devolvemos estado 'queued' en email_err para indicar encolado
+                return None, 'queued', recipients
             except Exception as e:
-                print(f"[EMAIL ERROR] {e}", file=sys.stderr)
+                print(f"[EMAIL ERROR] no se pudo encolar: {e}", file=sys.stderr)
                 return False, str(e), recipients
 
         try:
@@ -198,8 +210,11 @@ Responde EXCLUSIVAMENTE con un objeto JSON válido (sin markdown, sin bloques de
             email_sent, email_err, email_recipients = _enviar_correo_escalacion(respuesta, datos_paciente)
 
             respuesta_payload = {"respuesta": respuesta, "fuente": "gemini"}
-            if email_sent:
+            if email_sent is True:
                 respuesta_payload['email_enviado'] = True
+                respuesta_payload['email_recipients'] = email_recipients
+            elif email_err == 'queued' or email_err == 'queued':
+                respuesta_payload['email_enqueued'] = True
                 respuesta_payload['email_recipients'] = email_recipients
             elif email_err:
                 respuesta_payload['email_enviado'] = False
@@ -230,8 +245,11 @@ Responde EXCLUSIVAMENTE con un objeto JSON válido (sin markdown, sin bloques de
                 "warning": "Gemini tardo demasiado en responder. Se uso evaluacion local.",
                 "error_razon": str(exc),
             }
-            if email_sent:
+            if email_sent is True:
                 payload['email_enviado'] = True
+                payload['email_recipients'] = email_recipients
+            elif email_err == 'queued' or email_err == 'queued':
+                payload['email_enqueued'] = True
                 payload['email_recipients'] = email_recipients
             elif email_err:
                 payload['email_enviado'] = False
@@ -291,8 +309,11 @@ Responde EXCLUSIVAMENTE con un objeto JSON válido (sin markdown, sin bloques de
                 "warning": "Gemini no disponible temporalmente. Se uso evaluacion local.",
                 "error_razon": f"Error de Gemini: {str(exc)[:100]}",
             }
-            if email_sent:
+            if email_sent is True:
                 payload['email_enviado'] = True
+                payload['email_recipients'] = email_recipients
+            elif email_err == 'queued' or email_err == 'queued':
+                payload['email_enqueued'] = True
                 payload['email_recipients'] = email_recipients
             elif email_err:
                 payload['email_enviado'] = False
