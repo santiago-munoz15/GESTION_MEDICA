@@ -169,7 +169,7 @@ Responde EXCLUSIVAMENTE con un objeto JSON válido (sin markdown, sin bloques de
                     send_mail(subject, body, getattr(django_settings, 'DEFAULT_FROM_EMAIL', 'no-reply@localhost'), recipients, fail_silently=False)
                     print(f"[EMAIL] Enviado ok a: {recipients}")
                 except Exception as e:
-                    print(f"[EMAIL ERROR] {e}", file=sys.stderr)
+                    print(f"[EMAIL ERROR] {e}")
 
             # Enviar de forma asíncrona para no bloquear la respuesta HTTP ni agotar el worker
             try:
