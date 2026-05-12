@@ -149,7 +149,7 @@ EMAIL_PORT = int(os.environ.get("EMAIL_PORT", 587) or 587)
 EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
 EMAIL_USE_TLS = str(os.environ.get("EMAIL_USE_TLS", "True")).lower() in ("1", "true", "yes")
-DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "no-reply@gestion-medica.onrender.com")
+DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "santy8451@hotmail.com")
 
 # Email where escalation notifications are sent when gravedad == 'ALTA'
 SPECIALIST_CONTACT_EMAIL = os.environ.get("SPECIALIST_CONTACT_EMAIL", "")
